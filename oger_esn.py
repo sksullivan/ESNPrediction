@@ -9,12 +9,18 @@ from numpy import *
 from matplotlib.pyplot import *
 import Oger
 import mdp
+import csv
+from progressbar import AnimatedMarker, Bar, BouncingBar, Counter, ETA, \
+    FileTransferSpeed, FormatLabel, Percentage, \
+    ProgressBar, ReverseBar, RotatingMarker, \
+    SimpleProgress, Timer
 
 
 class res_driver():
 	def init_data(self):
 		data = genfromtxt('forex.csv',delimiter=';',converters={0: lambda (x):1.0})
 		data = data[:,1]
+		Oger.utils.make_inspectable(Oger.nodes.LeakyReservoirNode)
 		return data
 
 
@@ -29,7 +35,6 @@ class res_driver():
 	    	input_scaling=in_scale, bias_scaling=bias_scale, spectral_radius=spec_rad, reset_states=False) 
 
 		# Tell the reservoir to save its states for later plotting 
-		Oger.utils.make_inspectable(Oger.nodes.LeakyReservoirNode)
 		return reservoir
 
 	def make_flow(self,reservoir):
@@ -57,7 +62,7 @@ class res_driver():
 		self.errorLen = 500
 		mse = sum( square( data[self.trainLen+1:self.trainLen+self.errorLen+1] - Y[0:self.errorLen,0] ) ) / self.errorLen
 		print 'MSE = ' + str( mse )
-		return 
+		return mse
 
 	def vis_pred(self,data,Y):
 		figure(1).clear()
@@ -82,6 +87,14 @@ class res_driver():
 
 		data = self.init_data()
 
+		param_ranges_small = {
+			'N': arange(100,300,100),
+			'in_scale': arange(0.1,0.3,0.1),
+			'bias_scale': arange(0.0,0.2,0.1),
+			'spec_rad': arange(0.2,0.4,0.1),
+			'leak_rate': arange(0.0,0.2,0.1),	
+		}
+
 		param_ranges = {
 			'N': arange(100,2000,100),
 			'in_scale': arange(0.1,1,0.1),
@@ -90,14 +103,38 @@ class res_driver():
 			'leak_rate': arange(0.0,0.5,0.1),	
 		}
 
-		
-		res = self.init_res()
-		flow = self.make_flow(res)
-		Y = self.run_trial(res,flow,data)
+		# Generate all param combinations
+		dimensions = 1
+		for param,p_range in param_ranges_small.iteritems():
+			dimensions *= p_range.shape[0]
+		print dimensions
+		processed = 0
+
+		pbar = ProgressBar(widgets=[Percentage(), Bar()], maxval=dimensions).start()
+
+		meta_results = []
+		for n in param_ranges_small['N']:
+			for i in param_ranges_small['in_scale']:
+				for b in param_ranges_small['bias_scale']:
+					for s in param_ranges_small['spec_rad']:
+						for l in param_ranges_small['leak_rate']:
+							res = self.init_res()
+							flow = self.make_flow(res)
+							Y = self.run_trial(res,flow,data)
+							mse = self.compute_error(data,Y)
+							meta_results.append([n,i,b,s,l,mse])
+							processed += 1
+							pbar.update(processed)
+		fl = open('results_small.csv', 'w')
+		writer = csv.writer(fl)
+		writer.writerow(['N', 'in_scale', 'bias_scale', 'spec_rad', 'leak_rate', 'mse'])
+		for values in meta_results:
+			writer.writerow(values)
+		fl.close()
+
 		# plot some of it
 		# figure(10).clear()
 		# plot(data[0:1000])
-		self.compute_error(data,Y)
 		self.vis_pred(data,Y)
 
 
