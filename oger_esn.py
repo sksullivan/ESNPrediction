@@ -14,7 +14,32 @@ from progressbar import AnimatedMarker, Bar, BouncingBar, Counter, ETA, \
     FileTransferSpeed, FormatLabel, Percentage, \
     ProgressBar, ReverseBar, RotatingMarker, \
     SimpleProgress, Timer
+from multiprocessing import Pool,Value
 
+dimensions = Value('d',1.0)
+processed = Value('i',0)
+tasks = []
+r = None
+meta_results = []
+pbar = None
+
+def do_task(params):
+	n = params[0]
+	i = params[1]
+	b = params[2]
+	s = params[3]
+	l = params[4]
+	res = r.init_res(N=n,leak_rate=l,in_scale=i,bias_scale=b,spec_rad=s)
+	flow = r.make_flow(res)
+	# import pdb; pdb.set_trace()
+	# print 1
+	Y = r.run_trial(res,flow,r.data)
+	# print 2
+	mse = r.compute_error(r.data,Y)
+	# print 3
+	meta_results.append([n,i,b,s,l,mse])
+	processed.value += 1
+	print "%.2f" % (processed.value/dimensions.value * 100,)
 
 class res_driver():
 	def init_data(self):
@@ -22,8 +47,6 @@ class res_driver():
 		data = data[:,1]
 		Oger.utils.make_inspectable(Oger.nodes.LeakyReservoirNode)
 		return data
-
-
 
 	def init_res(self,N=1000,leak_rate=0.3,in_scale=0.5,bias_scale=0.5,spec_rad=0.2):
 		# generate the ESN reservoir
@@ -61,7 +84,6 @@ class res_driver():
 		# compute MSE for the first errorLen time steps
 		self.errorLen = 500
 		mse = sum( square( data[self.trainLen+1:self.trainLen+self.errorLen+1] - Y[0:self.errorLen,0] ) ) / self.errorLen
-		print 'MSE = ' + str( mse )
 		return mse
 
 	def vis_pred(self,data,Y):
@@ -81,11 +103,36 @@ class res_driver():
 	#title('Some reservoir activations $\mathbf{x}(n)$')
 
 	def __init__(self):
+		global tasks
+		global dimensions
+		global processed
+		global pbar
+		global meta_results
+
 		self.trainLen = 2000
 		self.testLen = 2000
 		self.initLen = 100
 
-		data = self.init_data()
+		self.data = self.init_data()
+
+		
+
+		# plot some of it
+		# figure(10).clear()
+		# plot(data[0:1000])
+		# self.vis_pred(data,Y)
+
+
+		#figure(3).clear()
+		#bar( range(1+resSize), readout.beta[:,0] )
+		#title('Output weights $\mathbf{W}^{out}$')
+
+	def start(self):
+		global tasks
+		global dimensions
+		global processed
+		global pbar
+		global meta_results
 
 		param_ranges_small = {
 			'N': arange(100,300,100),
@@ -96,7 +143,7 @@ class res_driver():
 		}
 
 		param_ranges = {
-			'N': arange(100,2000,100),
+			'N': arange(100,2100,500),
 			'in_scale': arange(0.1,1,0.1),
 			'bias_scale': arange(0.0,0.5,0.1),
 			'spec_rad': arange(0.2,2,0.1),
@@ -104,42 +151,27 @@ class res_driver():
 		}
 
 		# Generate all param combinations
-		dimensions = 1
-		for param,p_range in param_ranges_small.iteritems():
-			dimensions *= p_range.shape[0]
-		print dimensions
-		processed = 0
+		for param,p_range in param_ranges.iteritems():
+			dimensions.value *= p_range.shape[0]
+		print dimensions.value
 
-		pbar = ProgressBar(widgets=[Percentage(), Bar()], maxval=dimensions).start()
-
+		pool = Pool(6)
 		meta_results = []
-		for n in param_ranges_small['N']:
-			for i in param_ranges_small['in_scale']:
-				for b in param_ranges_small['bias_scale']:
-					for s in param_ranges_small['spec_rad']:
-						for l in param_ranges_small['leak_rate']:
-							res = self.init_res()
-							flow = self.make_flow(res)
-							Y = self.run_trial(res,flow,data)
-							mse = self.compute_error(data,Y)
-							meta_results.append([n,i,b,s,l,mse])
-							processed += 1
-							pbar.update(processed)
-		fl = open('results_small.csv', 'w')
+		for n in param_ranges['N']:
+			for i in param_ranges['in_scale']:
+				for b in param_ranges['bias_scale']:
+					for s in param_ranges['spec_rad']:
+						for l in param_ranges['leak_rate']:
+							tasks.append([n,i,b,s,l])
+
+		pool.map(do_task,tasks)
+		print('writing')
+		fl = open('results_big.csv', 'w')
 		writer = csv.writer(fl)
 		writer.writerow(['N', 'in_scale', 'bias_scale', 'spec_rad', 'leak_rate', 'mse'])
 		for values in meta_results:
 			writer.writerow(values)
 		fl.close()
 
-		# plot some of it
-		# figure(10).clear()
-		# plot(data[0:1000])
-		self.vis_pred(data,Y)
-
-
-		#figure(3).clear()
-		#bar( range(1+resSize), readout.beta[:,0] )
-		#title('Output weights $\mathbf{W}^{out}$')
-
 r = res_driver()
+r.start()
